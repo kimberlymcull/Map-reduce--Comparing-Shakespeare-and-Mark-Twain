@@ -1,0 +1,166 @@
+---
+title: 'Lab 4: Comparison of Shakespeare and Mark Twain (MapReduce)'
+author: "LT Kimberly Cull"
+date: "11/01/2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error=FALSE, warning=FALSE, message = FALSE)
+```
+
+This lab will use MapReduce to identify unique words and calculate their frequency from the writings of Mark Twain and William Shakespeare. The excerpts are stored as the text files Mark Twain.txt and Shakespeare.txt.
+
+The following code was used in conjunction with TextMapReduce.py to create a list of words and frequencies for both author's excerpts. Modification was made to the text of any file run with this python code to improve the ability to determine similarity. Specifically, the code normalizes, tokenizes, and removes common punctuation from text.
+
+```{}
+#import libraries. TextMapReduce is a prewritten function provided for this lab and required no ammending.
+import TextMapReduce
+import sys
+
+"""
+Word Count Example in the Simple Python MapReduce Framework
+"""
+
+mr = TextMapReduce.MapReduce()
+
+# =============================
+# Do not modify above this line
+
+def mapper(record):
+    # value: line of text loaded as record
+    value = record
+    #format text as lower case and tokenize
+    words = value.lower().split()
+    #remove common punctuation used in writting
+    words = [item.replace('!', '').replace('.', '').replace(',', '').replace('-', '').
+       replace(':','').replace('/','').replace("'", '').replace('"', '').replace('?', '').
+       replace('_', '').replace('[', '').replace(']', '').replace(';','').replace('(', '').
+       replace(')', '').replace('{', "").replace('}', '').replace('~','').replace('`','').
+       replace('@','').replace('#','').replace('$','').replace('%','').replace('^','').
+       replace('&','').replace('*','').replace('+','').replace('=','').replace('|','').
+       replace('<','').replace('>','') for item in words]
+    for w in words:
+      #emit words with count
+      mr.emit_intermediate(w, 1)
+
+def reducer(key, list_of_values):
+    # key: word
+    # value: list of occurrence counts
+    total = 0
+    for v in list_of_values:
+      total += v
+    mr.emit((key, total))
+
+# Do not modify below this line
+# =============================
+if __name__ == '__main__':
+  inputdata = open(sys.argv[1], "r", encoding='utf-8')
+  mr.execute(inputdata, mapper, reducer)
+```
+
+
+This code was saved as TextReduce.py and was run from the command line. The following commands were executed from the terminal and result in an outfile of unique words and frequencies for each author. *Ensure that all files are in the same folder and the following commands are executed from that folder*
+
+```{}
+python TextReduce.py Shakespeare.txt > shakespeare_output.txt
+python TextReduce.py MarkTwain.txt > twain_output.txt
+```
+
+Once an output file has been created for each author, the two files should be imported into R to explore similarity.
+
+```{r}
+#import txts
+shakespeare <- read.csv("~/Documents/OPERATIONS_RESEARCH/Q7/DataAnalytics/Labs/Lab_4_Instructions/TXT_MapReduce/Task4/shakespeare_output.txt", header=FALSE)
+twain <- read.csv("~/Documents/OPERATIONS_RESEARCH/Q7/DataAnalytics/Labs/Lab_4_Instructions/TXT_MapReduce/Task4/twain_output.txt", header=FALSE)
+```
+
+Then, we will format the imported text files for ease of use and graphing in R.
+
+```{r}
+#format files
+#change colomn names
+colnames(shakespeare) = c("Word", "Frequency")
+colnames(twain) = c("Word", "Frequency")
+#remove first row because it counts " " and is not neccessary
+shakespeare=shakespeare[-1,]
+twain=twain[-1,]
+#remove "[" and "]" in each column
+library(stringr)
+shakespeare$Word=substring(shakespeare$Word, 2)
+shakespeare$Frequency=str_sub(shakespeare$Frequency, 1, str_length(shakespeare$Frequency)-1)
+twain$Word=substring(twain$Word, 2)
+twain$Frequency=str_sub(twain$Frequency, 1, str_length(twain$Frequency)-1)
+```
+
+Now, we will merge the both sets of data into one data frame called *data*, keeping all the words, including those that are dissimilar. Merge will coerce NAs for words that do not appear in one of the texts. We will change these values to zero. The new data set will also require some cleaning.
+
+```{r}
+#create one data set for all words that appear in either text
+data <- merge(shakespeare, twain, by.x="Word", by.y="Word", all = TRUE)
+#assign NAs the value 0
+data[is.na(data)] <- 0
+#Change column names for clarity
+colnames(data)=c("Word","shakespeare_Freq","twain_Freq")
+#change frequencies into class numeric
+data$shakespeare_Freq=as.numeric(data$shakespeare_Freq)
+data$twain_Freq=as.numeric(data$twain_Freq)
+```
+
+Fewer than 20% for all of the words are similar between the two texts.
+
+```{r, tidy = TRUE}
+total=nrow(data)
+(similar=(nrow(data[data$shakespeare_Freq>0 & data$twain_Freq>0,]))/total)
+```
+
+We will begin visually exploring the data by graphing the word frequencies for both excerpts and identifying the words with the highest commonality between the two. 
+
+```{r}
+plot(data$shakespeare_Freq,data$twain_Freq, xlab="Shakespeare Word Frequency", ylab="Twain Word Frequency", main="Word Frequency Comparison of William Shakespeare and Mark Twain")
+sub=data[data$shakespeare_Freq>10000 & data$twain_Freq>30000,]
+text(sub$shakespeare_Freq,sub$twain_Freq,sub$Word, cex=0.6, pos=2, col="red")
+```
+
+Notice that the most frequently used words are articles. That is not very interesting. We will remove these words by revising the data set to only include stop words and graphing those words instead. 
+
+```{r}
+library(tm)
+#create a list of stop words with SMART dictionary
+st=stopwords("SMART")
+#remove stopwords from dataset
+data=data[-which(data$Word %in% st),]
+
+plot(data$shakespeare_Freq,data$twain_Freq, xlab="Shakespeare Word Frequency", ylab="Twain Word Frequency", main="Word Frequency Comparison of William Shakespeare and Mark Twain")
+sub=data[data$shakespeare_Freq>1000 & data$twain_Freq>2000,]
+text(sub$shakespeare_Freq,sub$twain_Freq,sub$Word, cex=0.6, pos=2, col="red")
+```
+
+Now, let's plot the most common words for each author with word cloud. These plots show all words that were used with a frequency greater than or equal to 1000 with the largest plotted words appearing the most frequently. Notice that Twain tends to use a larger number of words more frequently than Shakespeare.
+
+```{r}
+library(wordcloud)
+#For Shakespeare
+wordcloud(data$Word, data$shakespeare_Freq, min.freq =1000, scale=c(5, .2), random.order = FALSE, random.color = FALSE, colors= c("indianred1","indianred2","indianred3","indianred"))
+```
+
+
+```{r}
+#For Twain
+wordcloud(data$Word, data$twain_Freq, min.freq =1000, scale=c(5, .2), random.order = FALSE, random.color = FALSE, colors= c("deepskyblue","deepskyblue2","deepskyblue3","deepskyblue4"))
+```
+
+This word cloud plots common words between the authors.
+
+```{r}
+#normalize frequencies
+data$shake_norm=data$shakespeare_Freq/sum(data$shakespeare_Freq)
+data$twain_norm=data$twain_Freq/sum(data$twain_Freq)
+#create an average usage column
+data$avg=(data$shake_norm+data$twain_norm)/2
+#create word cloud by average usage between the two authors
+data=data[order(data$avg,decreasing=TRUE),]
+common=head(data,50)
+wordcloud(common$Word, common$avg, min.freq =0, scale=c(5, .2), random.order = FALSE, random.color = FALSE, colors = c("darkorchid1","darkorchid2","darkorchid3","darkorchid4"))
+```
+
